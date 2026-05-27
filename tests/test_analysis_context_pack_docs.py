@@ -25,6 +25,7 @@ def test_analysis_context_pack_doc_has_required_sections() -> None:
         "## 术语与边界",
         "## P0 范围与非目标",
         "## P1 内部契约",
+        "## P2 Builder 契约",
         "## 字段质量状态",
         "## 现有状态映射",
         "## 七路径盘点",
@@ -202,6 +203,27 @@ def test_analysis_context_pack_doc_keeps_later_phases_out_of_p1() -> None:
         assert token in section
 
 
+def test_analysis_context_pack_doc_defines_p2_builder_boundaries() -> None:
+    section = _section(_read_doc(), "P2 Builder 契约")
+
+    for token in (
+        "`AnalysisContextBuilder`",
+        "assembler",
+        "pipeline 已 fetch",
+        "zero-fetch",
+        "`PipelineAnalysisArtifacts`",
+        "`code`、`stock_name`、`market`",
+        "`price_stale`",
+        "`quote_stale`",
+        "`intraday_realtime_overlay`",
+        "`fetch_failed`",
+        "P3 runtime",
+        "不改变 Prompt",
+        "不写入 history/task/report metadata",
+    ):
+        assert token in section
+
+
 def test_analysis_context_pack_doc_maps_existing_status_terms() -> None:
     section = _section(_read_doc(), "现有状态映射")
 
@@ -256,3 +278,4 @@ def test_analysis_context_pack_doc_updates_indexes_and_changelog() -> None:
     ) in index_en
     assert "[文档] 新增 AnalysisContextPack P0 上下文盘点" in changelog
     assert "[新功能] 新增 AnalysisContextPack P1 内部契约与脱敏序列化测试" in changelog
+    assert "[新功能] 新增 AnalysisContextPack P2 builder" in changelog

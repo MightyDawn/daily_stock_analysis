@@ -34,7 +34,7 @@ P1 schema 包含：
 
 - `PACK_VERSION = "1.0"`，并通过 `AnalysisContextPack.pack_version` 标记契约版本。
 - `ContextFieldStatus`：只允许 `available`、`missing`、`not_supported`、`fallback`、`stale`、`estimated`、`partial`；`fetch_failed` 仍留到 P5。
-- `AnalysisSubject`：顶层身份槽，只包含 `code`、`stock_name`、`market`；`exchange`、`currency`、`industry` 留给 P2 builder 从现有 artifacts 填充，不重复新增 `identity` block。
+- `AnalysisSubject`：顶层身份槽，只包含 `code`、`stock_name`、`market`；`exchange`、`currency`、`industry` 留给后续扩展，P2 builder 不扩 P1 schema，也不重复新增 `identity` block。
 - `AnalysisContextItem`：字段级输入项，包含 `status`、`value`、`source`、`timestamp`、`fallback_from`、`missing_reason`、`warnings`、`metadata`。
 - `AnalysisContextBlock`：数据块级分组，包含 `status`、`items`、`source`、`timestamp`、`warnings`、`metadata`，其中 `items` 是 `Dict[str, AnalysisContextItem]`。
 - `DataQuality`：P1 只保留 `warnings` 与 `metadata` 容器，不做评分、聚合计数或模型置信度限制。
@@ -71,6 +71,27 @@ P1 Block Catalog：
 - `AnalysisContextPack.to_safe_dict()` 先执行 `model_dump(mode="json")`，再调用 `redact_sensitive_mapping()`。
 - `redact_sensitive_mapping()` 只做 dict/list 的 key-based 递归脱敏，命中 `api_key`、`access_token`、`refresh_token`、`authorization_header`、`webhook_url`、`password`、`cookie`、`secret`、`token`、`sendkey`、`license_key` 等敏感键或短语时把值替换为 `[REDACTED]`。
 - P1 不扫描普通字符串值，不做 URL 正则脱敏，不把 `data_api` 或裸 `api` / `key` 当作敏感命中，避免把本契约扩展成通用 secrets engine。
+
+## P2 Builder 契约
+
+P2 新增 `AnalysisContextBuilder`，但首版只做 assembler：从普通分析 pipeline 已经拿到的 artifacts 组装内部 `AnalysisContextPack`。Issue 验收项里的“复用现有数据源”在本 slice 中解释为复用 pipeline 已 fetch 的 `realtime_quote`、`base_context`、`enhanced_context`、`trend_result`、`chip_data`、`fundamental_context`、`news_context` 等 artifacts；builder 本身 zero-fetch，不调用 DB、fetcher、SearchService、Agent 工具或具体 provider。
+
+P2 输入契约使用 `PipelineAnalysisArtifacts`：`code`、`stock_name`、`market`、`phase`、`base_context`、`enhanced_context`、`realtime_quote`、`trend_result`、`chip_data`、`fundamental_context`、`news_context`、`news_result_count`、`metadata`。单股 `build()` 与批量 `build_batch()` 复用同一结构，避免 P3 runtime 接入时再次改签名。
+
+P2 block 组装边界：
+
+- `subject` 仍只写 `code`、`stock_name`、`market` 三字段，不扩 `AnalysisSubject`。
+- `phase` 只接收传入的 `MarketPhaseContext.to_dict()` 产物，不从 `enhanced_context` 反推。
+- `quote` 从 `realtime_quote` 组装；缺失为 `missing`；`source=fallback` 映射为 `fallback`；`fallback_from` 只在 artifact/metadata 显式提供时填写，否则只记录稳定 warning code，不伪造 provider 链。
+- `quote` stale 只透传 `price_stale`、`quote_stale`、`quote_stale_seconds` 等显式 marker；builder 不推断新鲜度。
+- `daily_bars` 只表达完整日线窗口，优先读 `base_context.today`、`base_context.yesterday`、`base_context.date`、`base_context.data_missing`；date-only 放入 `value` 或 `metadata`，不写入 `timestamp`。
+- `enhanced_context.today.data_source` 为 `realtime:*` 时，只影响 `technical`：block 标 `partial`，相关 item 标 `estimated`，warning 使用 `intraday_realtime_overlay`。
+- `technical` 优先复用 `trend_result.to_dict()`；无 trend artifact 时为 `missing`。
+- `chip` 复用 `chip_data.to_dict()`；无 chip artifact 默认 `missing`，只有输入 metadata/artifact 明确 not_supported 时才标 `not_supported`。
+- `fundamentals` 只读 `fundamental_context` 参数；`ok` 映射为 `available`，`not_supported` 映射为 `not_supported`，`partial` 映射为 `partial`，`failed` 映射为 `missing` + 稳定 reason code；不写入 `errors[]` 原文。
+- `news` 非空白字符串为 `available`，空白或缺失为 `missing`；`news_result_count` 写入 pack metadata。
+
+P2 不组装 `portfolio`、`events`、`market_context`，也不把 `capital_flow` 拆成独立 block；首版只把它保留在 fundamentals 的 coverage/source chain metadata 中。P2 也不改变 Prompt、不让普通分析或 Agent runtime 消费 pack、不写入 history/task/report metadata、不暴露完整 pack 到 API/Web/Bot/Desktop/通知，不做 P5 data-quality scoring、`fetch_failed` 细分或模型置信度限制。
 
 ## 字段质量状态
 
