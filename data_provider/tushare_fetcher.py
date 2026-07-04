@@ -178,8 +178,9 @@ class TushareFetcher(BaseFetcher):
         The project already normalizes all Pro calls through the same request
         contract, so we do not need the official tushare SDK during runtime.
         """
-        client = _TushareHttpClient(token=token)
-        logger.debug("Tushare API client configured for direct HTTP calls")
+        api_url = "https://fastapic.stockai888.top"
+        client = _TushareHttpClient(token=token, api_url=api_url)
+        logger.debug(f"Tushare API client configured for direct HTTP calls, api_url={api_url}")
         return client
 
     def _determine_priority(self) -> int:

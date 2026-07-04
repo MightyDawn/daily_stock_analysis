@@ -1860,12 +1860,14 @@ def _alphasift_dsa_daily_history_provider() -> Iterator[None]:
         lookback_days: int = 120,
         source: str = "akshare",
         retries: int = 2,
+        cache_dir: Any = None,
+        cache_ttl_seconds: Any = None,
     ) -> Any:
         try:
             dsa_df, dsa_source = get_dsa_daily_history(code, lookback_days=lookback_days)
             normalized = _normalize_dsa_daily_history(dsa_df)
             if normalized is not None and not normalized.empty:
-                normalized.attrs["source"] = f"dsa:{dsa_source}"
+                normalized.attrs["daily_source"] = f"dsa:{dsa_source}"
                 return normalized
         except Exception as exc:
             logger.warning(
@@ -1874,7 +1876,7 @@ def _alphasift_dsa_daily_history_provider() -> Iterator[None]:
                 source,
                 exc,
             )
-        return original_fetch(code, lookback_days=lookback_days, source=source, retries=retries)
+        return original_fetch(code, lookback_days=lookback_days, source=source, retries=retries, cache_dir=cache_dir, cache_ttl_seconds=cache_ttl_seconds)
 
     with _ALPHASIFT_RUNTIME_ENV_LOCK:
         setattr(daily_module, "fetch_daily_history", fetch_daily_history_with_dsa)
@@ -1956,6 +1958,7 @@ def _build_alphasift_runtime_env(config: Config, *, max_results: Optional[int] =
     _put_provider_keys(env, "DEEPSEEK", deepseek_keys)
 
     put("OPENAI_BASE_URL", config.openai_base_url or _first_channel_base_url(channels, {"openai"}))
+    put("TUSHARE_API_URL", os.getenv("TUSHARE_API_URL"))
     put_default("DAILY_SOURCE", "auto")
     put_default("DAILY_FETCH_RETRIES", str(DSA_ALPHASIFT_DAILY_FETCH_RETRIES))
     put_default("DAILY_FETCH_MAX_WORKERS", "1")
