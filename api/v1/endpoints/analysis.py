@@ -725,6 +725,8 @@ async def task_stream():
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
         }
     )
 

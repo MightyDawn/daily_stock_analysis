@@ -2355,8 +2355,10 @@ class SearchService:
         self._cache: Dict[str, Tuple[float, 'SearchResponse']] = {}
         self._cache_lock = threading.RLock()
         self._cache_inflight: Dict[str, threading.Event] = {}
-        # Default cache TTL in seconds (10 minutes)
-        self._cache_ttl: int = 600
+        # 多维度情报结果缓存: {intel_key: (timestamp, results_dict)}
+        self._intel_result_cache: Dict[str, Tuple[float, Dict[str, 'SearchResponse']]] = {}
+        # Cache TTL: 30 minutes, 同一次分析流程内多次搜索可共享缓存
+        self._cache_ttl: int = 1800
         logger.info(
             "新闻时效策略已启用: profile=%s, profile_days=%s, NEWS_MAX_AGE_DAYS=%s, effective_window=%s",
             self.news_strategy_profile,
@@ -2541,6 +2543,18 @@ class SearchService:
     def _cache_key(self, query: str, max_results: int, days: int) -> str:
         """Build a cache key from query parameters."""
         return f"{query}|{max_results}|{days}"
+
+    @staticmethod
+    def _normalize_code_for_cache(code: str) -> str:
+        """Normalize stock code for cache key to match variations (603199, 603199.SH, sh603199)."""
+        if not code:
+            return ""
+        import re
+        # Extract just the digit part for A shares
+        digits = re.sub(r"[^0-9]", "", str(code))
+        if len(digits) == 6:
+            return digits
+        return str(code).upper()
 
     def _get_cached_locked(self, key: str) -> Optional['SearchResponse']:
         entry = self._cache.get(key)
@@ -3736,10 +3750,12 @@ class SearchService:
             provider_max_results,
         )
 
+        # 构建缓存 key：同一只股票的搜索结果共享缓存，忽略 focus_keywords 差异以避免重复 API 调用
         cache_key = self._cache_key(
             (
-                f"{query}|target={stock_code}:{stock_name}|"
-                f"news_pref={'zh' if prefer_chinese else 'default'}"
+                f"target={stock_code}:{stock_name}|"
+                f"news_pref={'zh' if prefer_chinese else 'default'}|"
+                f"is_foreign={'1' if is_foreign else '0'}"
             ),
             max_results,
             search_days,
@@ -4051,6 +4067,18 @@ class SearchService:
         Returns:
             {维度名称: SearchResponse} 字典
         """
+        # 缓存检查：同一股票在同一分析流程内重复调用直接返回缓存结果
+        intel_cache_key = f"intel:{self._normalize_code_for_cache(stock_code)}:{stock_name}"
+        with self._cache_lock:
+            cached_entry = self._intel_result_cache.get(intel_cache_key)
+            if cached_entry is not None:
+                ts, cached_results = cached_entry
+                if time.time() - ts <= self._cache_ttl:
+                    logger.info(f"[情报搜索] 使用缓存结果: {stock_name}({stock_code})")
+                    return cached_results
+                else:
+                    self._intel_result_cache.pop(intel_cache_key, None)
+        
         results = {}
         search_count = 0
 
@@ -4280,6 +4308,10 @@ class SearchService:
             
             # 短暂延迟避免请求过快
             time.sleep(0.5)
+        
+        # 存入缓存，供后续重复调用复用
+        with self._cache_lock:
+            self._intel_result_cache[intel_cache_key] = (time.time(), results)
         
         return results
     

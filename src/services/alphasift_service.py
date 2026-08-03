@@ -53,6 +53,7 @@ DSA_ALPHASIFT_HOTSPOT_EVENT_SUMMARY_MAX_CHARS = 90
 DSA_ALPHASIFT_HOTSPOT_PREFETCH_DETAIL_COUNT = 8
 DSA_ALPHASIFT_HOTSPOT_UNAVAILABLE_CODE = "eastmoney_hotspot_unavailable"
 DSA_ALPHASIFT_HOTSPOT_UNAVAILABLE_MESSAGE = "热点源连接中断，暂无可用缓存。"
+DSA_ALPHASIFT_SNAPSHOT_FALLBACK_MAX_AGE_HOURS = 24  # 回退缓存最大有效期（小时），防止使用过期数据
 DSA_ALPHASIFT_HOTSPOT_CONNECTIVITY_ERROR_MARKERS = (
     "remote disconnected",
     "remote end closed connection",
@@ -1970,7 +1971,10 @@ def _build_alphasift_runtime_env(config: Config, *, max_results: Optional[int] =
     alphasift_data_dir = _resolve_alphasift_data_dir()
     put_default("ALPHASIFT_DATA_DIR", str(alphasift_data_dir))
     put_default("ALPHASIFT_FALLBACK_SNAPSHOT_PATH", str(alphasift_data_dir / "snapshot.last_good.json"))
+    # 关键：设置回退缓存过期时间，确保明天不会使用今天的旧数据
+    put_default("SNAPSHOT_FALLBACK_MAX_AGE_HOURS", str(DSA_ALPHASIFT_SNAPSHOT_FALLBACK_MAX_AGE_HOURS))
     put_default("ALPHASIFT_DAILY_HISTORY_CACHE_DIR", str(alphasift_data_dir / "daily_history"))
+    put("ALPHASIFT_DAILY_CACHE_TTL_SECONDS", os.getenv("ALPHASIFT_DAILY_CACHE_TTL_SECONDS"))
     put_default("ALPHASIFT_INDUSTRY_PROVIDER_CACHE_DIR", str(alphasift_data_dir / "industry_provider_cache"))
     return env
 

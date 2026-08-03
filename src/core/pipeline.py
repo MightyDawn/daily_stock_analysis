@@ -1400,6 +1400,50 @@ class StockAnalysisPipeline:
             if analysis_context_pack_summary:
                 initial_context["analysis_context_pack_summary"] = analysis_context_pack_summary
 
+            # 预热新闻搜索缓存：在 Agent 执行前先调用一次搜索，缓存结果供 Agent 多次复用，避免重复消耗 API Credits
+            prefetched_news_response = None
+            prefetched_intel_results = None
+            if self.search_service is not None and self.search_service.is_available:
+                try:
+                    logger.info(f"[{code}] 预热新闻搜索缓存...")
+                    # 先预热多维度情报搜索（这是Agent主要使用的接口）
+                    prefetched_intel_results = self.search_service.search_comprehensive_intel(
+                        stock_code=code,
+                        stock_name=stock_name,
+                        max_searches=2
+                    )
+                    # 同时预热通用新闻搜索
+                    prefetched_news_response = self.search_service.search_stock_news(
+                        stock_code=code,
+                        stock_name=stock_name,
+                        max_results=10
+                    )
+                    # 将新闻结果注入到 Agent 上下文中，减少 Agent 主动调用搜索的需求
+                    news_context_parts = []
+                    if prefetched_intel_results:
+                        intel_report = self.search_service.format_intel_report(prefetched_intel_results, stock_name)
+                        news_context_parts.append(intel_report)
+                    elif prefetched_news_response.success and prefetched_news_response.results:
+                        news_lines = []
+                        for item in prefetched_news_response.results[:8]:
+                            date_str = f"[{item.published_date}] " if item.published_date else ""
+                            news_lines.append(f"- {date_str}{item.title}")
+                            if item.snippet:
+                                news_lines.append(f"  摘要: {item.snippet}")
+                        news_context_parts.append("最新相关新闻资讯（已缓存，可直接使用）:\n" + "\n".join(news_lines))
+                    
+                    if news_context_parts:
+                        news_context = "\n\n".join(news_context_parts)
+                        existing = initial_context.get("news_context")
+                        initial_context["news_context"] = (
+                            f"{existing}\n\n{news_context}"
+                            if existing
+                            else news_context
+                        )
+                        logger.info(f"[{code}] 新闻搜索缓存预热完成")
+                except Exception as e:
+                    logger.warning(f"[{code}] 新闻搜索缓存预热失败: {e}")
+
             # 运行 Agent
             if report_language in ("en", "ko"):
                 message = f"Analyze stock {code} ({stock_name}) and return the full decision dashboard JSON."
@@ -1608,16 +1652,18 @@ class StockAnalysisPipeline:
 
             resolved_stock_name = result.name if result and result.name else stock_name
 
-            # 保存新闻情报到数据库（Agent 工具结果仅用于 LLM 上下文，未持久化，Fixes #396）
-            # 使用 search_stock_news（与 Agent 工具调用逻辑一致），仅 1 次 API 调用，无额外延迟
+            # 保存新闻情报到数据库（复用预热缓存结果，无需再次调用 API）
             if self.search_service is not None and self.search_service.is_available:
                 try:
-                    news_response = self.search_service.search_stock_news(
-                        stock_code=code,
-                        stock_name=resolved_stock_name,
-                        max_results=5
-                    )
-                    if news_response.success and news_response.results:
+                    # 优先使用预热的结果，否则从缓存获取
+                    news_response = prefetched_news_response
+                    if news_response is None:
+                        news_response = self.search_service.search_stock_news(
+                            stock_code=code,
+                            stock_name=resolved_stock_name,
+                            max_results=5
+                        )
+                    if news_response and news_response.success and news_response.results:
                         query_context = self._build_query_context(query_id=query_id)
                         self.db.save_news_intel(
                             code=code,
